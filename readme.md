@@ -1,291 +1,199 @@
-# HID Barcode Scanner Emulator
+# HID Barcode Scanner Emulator (Windows)
 
-A simple Python tool that emulates a USB HID barcode scanner by sending keystrokes to the currently focused window.
-
-Useful for testing POS systems, inventory software, web forms, ERP applications, or any software that normally receives input from a physical barcode scanner.
-
----
+A lightweight HID barcode scanner emulator for Windows that injects keystrokes into the currently focused window, simulating a real USB barcode scanner.
 
 ## Features
 
-* Simulates real barcode scanner behavior
-* Types characters one-by-one with configurable delay
-* Sends an optional end key after each scan
+* Single barcode injection
 * Interactive mode
-* Single barcode injection from CLI
-* Batch mode from a text file
-* Configurable startup countdown
-* Supports:
-
-  * Enter
-  * Tab
-  * Space
-  * F1–F12
-  * No end key
+* Batch execution from text files
+* Global hotkey support
+* Continuous trigger mode
+* Real-time mode switching
+* Inline batch commands (`!DELAY`)
+* Configurable end key
+* Configurable character delay
 
 ---
 
 ## Requirements
 
-Python 3.10+
-
-Install dependencies:
-
 ```bash
 pip install pynput
 ```
 
 ---
 
-## Installation
-
-Clone or download the project:
-
-```bash
-git clone https://github.com/yourusername/hid-barcode-emulator.git
-cd hid-barcode-emulator
-```
-
-Install dependencies:
-
-```bash
-pip install pynput
-```
-
----
-
-## Usage
+## Quick Start
 
 ### Interactive Mode
-
-Launch without arguments:
 
 ```bash
 python barcode_emulator.py
 ```
 
-You will be prompted to configure:
+### Single Scan
 
-* End key
-* Character delay
-* Startup countdown
+```bash
+python barcode_emulator.py --value "1234567890"
+```
 
-Then repeatedly enter barcode values to scan.
+### Continuous Mode
+
+```bash
+python barcode_emulator.py --continuous
+```
+
+### Batch Mode
+
+```bash
+python barcode_emulator.py --batch list.txt
+```
+
+---
+
+## Batch File Format
+
+Simple batch file:
+
+```txt
+12345
+67890
+ABCDE
+```
+
+Batch file with inline delay commands:
+
+```txt
+12345
+
+!DELAY 0.5
+
+67890
+ABCDE
+
+!DELAY 2
+
+FGHIJ
+```
+
+### Supported Commands
+
+#### `!DELAY`
+
+Changes the delay between subsequent barcode scans.
 
 Example:
 
-```text
-📦 Barcode value: 8851234567890
+```txt
+!DELAY 0.5
 ```
 
-Type:
+Meaning:
 
-```text
-quit
-```
-
-to exit.
-
----
-
-### Single Scan Mode
-
-Inject a single barcode value:
-
-```bash
-python barcode_emulator.py --value "8851234567890"
-```
-
-or
-
-```bash
-python barcode_emulator.py -v "8851234567890"
+```txt
+Wait 0.5 seconds after each subsequent scan
+until another !DELAY command is encountered.
 ```
 
 ---
 
-### Custom End Key
+## Continuous Mode
 
-Send TAB instead of ENTER:
+Continuous mode allows barcode injection using a global hotkey.
 
-```bash
-python barcode_emulator.py \
-    --value "8851234567890" \
-    --end tab
+Default hotkey:
+
+```txt
+F9
 ```
 
-Available end keys:
+Custom hotkey:
 
-```text
-enter
-tab
-space
-f1-f12
-none
+```bash
+python barcode_emulator.py --continuous --hotkey f8
 ```
 
 ---
 
-### Change Typing Speed
+## Continuous Mode Commands
 
-Set delay between characters (milliseconds):
+### Single Trigger
 
-```bash
-python barcode_emulator.py \
-    --value "8851234567890" \
-    --delay 5
+Switch to single barcode mode:
+
+```txt
+123456789
 ```
 
-Example:
-
-| Delay  | Description           |
-| ------ | --------------------- |
-| 5 ms   | Very fast             |
-| 20 ms  | Typical scanner speed |
-| 50 ms  | Slow                  |
-| 100 ms | Human-like typing     |
+Press the hotkey to inject the configured barcode.
 
 ---
 
-### Startup Countdown
+### Batch Trigger
 
-Give yourself time to focus the target application:
+Switch to batch mode:
 
-```bash
-python barcode_emulator.py \
-    --value "8851234567890" \
-    --wait 10
+```txt
+batch:list.txt
 ```
 
-Program waits 10 seconds before injecting keystrokes.
+Press the hotkey to execute the entire batch file.
 
 ---
 
-## Batch Mode
+### Show Status
 
-Create a file:
-
-### `barcodes.txt`
-
-```text
-8851234567890
-ABC-10001
-ABC-10002
-ABC-10003
-```
-
-Run:
-
-```bash
-python barcode_emulator.py \
-    --batch barcodes.txt
-```
-
-Output:
-
-```text
-[1/4] Injecting: '8851234567890'
-[2/4] Injecting: 'ABC-10001'
-[3/4] Injecting: 'ABC-10002'
-[4/4] Injecting: 'ABC-10003'
+```txt
+status
 ```
 
 ---
 
-### Delay Between Scans
+### Change End Key
 
-```bash
-python barcode_emulator.py \
-    --batch barcodes.txt \
-    --between 2
-```
-
-Waits 2 seconds between scans.
-
----
-
-## Command-Line Arguments
-
-| Argument    | Short | Description                         |
-| ----------- | ----- | ----------------------------------- |
-| `--value`   | `-v`  | Barcode value to inject             |
-| `--end`     | `-e`  | End key after scan                  |
-| `--delay`   | `-d`  | Delay per character (ms)            |
-| `--wait`    | `-w`  | Startup countdown (seconds)         |
-| `--batch`   | `-b`  | Text file containing barcode values |
-| `--between` | -     | Delay between batch scans (seconds) |
-
----
-
-## Example Commands
-
-### Scan and press ENTER
-
-```bash
-python barcode_emulator.py \
-    --value "1234567890"
-```
-
-### Scan and press TAB
-
-```bash
-python barcode_emulator.py \
-    --value "1234567890" \
-    --end tab
-```
-
-### Scan without end key
-
-```bash
-python barcode_emulator.py \
-    --value "1234567890" \
-    --end none
-```
-
-### Fast scanner simulation
-
-```bash
-python barcode_emulator.py \
-    --value "1234567890" \
-    --delay 5
-```
-
-### Batch mode
-
-```bash
-python barcode_emulator.py \
-    --batch barcodes.txt \
-    --between 1
+```txt
+end enter
+end tab
+end none
 ```
 
 ---
 
-## Typical Use Cases
+### Change Character Delay
 
-* POS software testing
-* Inventory management systems
-* ERP/WMS testing
-* Barcode workflow automation
-* QA testing
-* Web application form testing
-* Scanner integration validation
+Delay is specified in milliseconds.
+
+```txt
+delay 10
+```
 
 ---
 
-## Warning
+## Example Workflow
 
-This program injects keyboard input into the currently focused window.
+```txt
+> 123456789
+[MODE] SINGLE
 
-Before the countdown finishes:
+Press F9
 
-1. Click the target application.
-2. Place the cursor in the desired input field.
-3. Do not switch windows during injection.
+Barcode injected
 
-The tool behaves similarly to a real USB HID barcode scanner.
+> batch:test.txt
+[MODE] BATCH
+
+Press F9
+
+Batch file executed
+```
 
 ---
 
-## License
+## Notes
 
-MIT License
+* The target application must be focused before injection.
+* Global hotkeys work system-wide.
+* Continuous mode prevents overlapping executions.
+* Batch mode supports inline commands such as `!DELAY`.
+* Empty lines are ignored automatically.
