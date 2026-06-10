@@ -1,0 +1,5 @@
+barcode1_here
+!DELAY 0.5
+barcode2_here
+!DELAY 3.2
+barcode3_here
