@@ -55,6 +55,32 @@ DEFAULT_STARTUP_WAIT = 3      # วินาที countdown ก่อนเร�
 # Core emulator
 # ─────────────────────────────────────────────
 
+def _parse_batch_lines(lines: list[str], default_delay: float) -> list[tuple[str, float]]:
+    """
+    แปลง raw lines เป็น list of (barcode_value, delay_after_seconds)
+    !DELAY X → apply เป็น delay หลัง barcode ก่อนหน้า (ไม่ใช่ถัดไป)
+    """
+    result = []
+
+    for line in lines:
+        if line.upper().startswith("!DELAY "):
+            try:
+                new_delay = float(line[7:].strip())
+                if result:
+                    # ย้อนกลับไปอัปเดต delay ให้บาร์โค้ดตัวล่าสุดที่เพิ่ง push เข้าไป
+                    last_barcode = result[-1][0]
+                    result[-1] = (last_barcode, new_delay)
+                else:
+                    # ถ้าเจอ !DELAY บรรทัดแรกสุดเลย (ไม่มีบาร์โค้ดก่อนหน้า) ก็ข้ามไป
+                    pass
+            except ValueError:
+                print(f"  [BATCH WARN] ค่า !DELAY เพี้ยน: {line!r} — ข้ามไป")
+        else:
+            # ใส่บาร์โค้ดบรรทัดใหม่เข้าไป พร้อมแปะ default_delay ไว้ก่อน
+            result.append((line, default_delay))
+
+    return result
+
 def emulate_scan(
     value: str,
     end_key: str = DEFAULT_END_KEY,
@@ -110,8 +136,6 @@ def emulate_batch(
     between_scan_delay: float = 1.0,
     startup_wait: int = DEFAULT_STARTUP_WAIT,
 ) -> None:
-    """จำลองการสแกน barcode หลายค่าต่อกัน โดยอ่าน Inline !DELAY ได้"""
-
     end_key_lower = end_key.lower().strip()
     if end_key_lower not in END_KEY_MAP:
         print(f"[ERROR] ไม่รู้จัก end key: '{end_key}'")
@@ -120,40 +144,29 @@ def emulate_batch(
     resolved_end_key = END_KEY_MAP[end_key_lower]
     keyboard = Controller()
 
-    print(f"\n[BATCH] Processing {len(lines)} lines | end key: {end_key_lower} | char delay: {char_delay*1000:.0f}ms")
+    # ── Pre-process ──
+    parsed = _parse_batch_lines(lines, between_scan_delay)
+
+    print(f"\n[BATCH] Processing {len(parsed)} barcodes | end key: {end_key_lower} | char delay: {char_delay*1000:.0f}ms")
 
     for i in range(startup_wait, 0, -1):
         print(f"  ⏳ เริ่มใน {i} วินาที...", end="\r")
         time.sleep(1)
     print()
 
-    current_between_delay = between_scan_delay
-    total_barcodes = sum(1 for l in lines if not l.upper().startswith("!DELAY "))
-    current_idx = 0
-
-    for idx, line in enumerate(lines):
-        if line.upper().startswith("!DELAY "):
-            try:
-                current_between_delay = float(line[7:].strip())
-                print(f"  [BATCH CONFIG] เปลี่ยนระหว่างสแกน delay -> {current_between_delay} วิ")
-            except ValueError:
-                print(f"  [BATCH WARN] Syntax !DELAY ผิดพลาด: {line}")
-            continue
-
-        current_idx += 1
-        print(f"  [{current_idx}/{total_barcodes}] Injecting: {line!r}")
-        for char in line:
+    for idx, (value, delay_after) in enumerate(parsed):
+        print(f"  [{idx+1}/{len(parsed)}] Injecting: {value!r}")
+        for char in value:
             keyboard.type(char)
             time.sleep(char_delay)
-            
+
         if resolved_end_key is not None:
             keyboard.press(resolved_end_key)
             keyboard.release(resolved_end_key)
 
-        # เช็กว่ายังมีบาร์โค้ดเหลือข้างหลังอีกไหม ถ้ามีค่อย delay
-        has_more_barcodes = any(not l.upper().startswith("!DELAY ") for l in lines[idx+1:])
-        if has_more_barcodes:
-            time.sleep(current_between_delay)
+        # delay หลัง inject — ยกเว้นตัวสุดท้าย
+        if idx < len(parsed) - 1:
+            time.sleep(delay_after)
 
     print("\n  ✅ Batch complete!")
 
@@ -220,7 +233,7 @@ HOTKEY_KEY_MAP = {
     "f5": "<f5>", "f6": "<f6>", "f7": "<f7>", "f8": "<f8>",
     "f9": "<f9>", "f10": "<f10>", "f11": "<f11>", "f12": "<f12>",
 }
-DEFAULT_HOTKEY = "f9"
+DEFAULT_HOTKEY = "f8"
 
 
 def _inject_current(state: dict, lock: threading.Lock) -> None:
@@ -271,27 +284,20 @@ def _inject_current(state: dict, lock: threading.Lock) -> None:
                     _print_status(f"[ERROR] เปิดไฟล์แบทช์ไม่ได้: {e}")
                     return
 
-                current_between_delay = between_delay
-                for idx, line in enumerate(lines):
-                    if line.upper().startswith("!DELAY "):
-                        try:
-                            current_between_delay = float(line[7:].strip())
-                            _print_status(f"[BATCH CONFIG] ปรับ Delay ระหว่างรอบ -> {current_between_delay} วิ")
-                        except ValueError:
-                            _print_status(f"[BATCH WARN] ค่า !DELAY เพี้ยน: {line}")
-                        continue
+                # ── Pre-process แทน inline parse ──
+                parsed = _parse_batch_lines(lines, between_delay)
 
-                    _print_status(f"[BATCH RUNNING] กำลังยิง: {line!r}")
-                    for char in line:
+                for idx, (barcode, delay_after) in enumerate(parsed):
+                    _print_status(f"[BATCH RUNNING] กำลังยิง: {barcode!r}")
+                    for char in barcode:
                         keyboard.type(char)
                         time.sleep(char_delay)
                     if resolved_end is not None:
                         keyboard.press(resolved_end)
                         keyboard.release(resolved_end)
 
-                    has_more_barcodes = any(not l.upper().startswith("!DELAY ") for l in lines[idx+1:])
-                    if has_more_barcodes:
-                        time.sleep(current_between_delay)
+                    if idx < len(parsed) - 1:
+                        time.sleep(delay_after)
 
                 _print_status(f"[DONE] ยิง Batch จากไฟล์ {batch_file!r} ครบถ้วนแล้ว!")
         finally:
