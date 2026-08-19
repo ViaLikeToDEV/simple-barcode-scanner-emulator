@@ -58,26 +58,32 @@ DEFAULT_STARTUP_WAIT = 3      # วินาที countdown ก่อนเร�
 def _parse_batch_lines(lines: list[str], default_delay: float) -> list[tuple[str, float]]:
     """
     แปลง raw lines เป็น list of (barcode_value, delay_after_seconds)
-    !DELAY X → apply เป็น delay หลัง barcode ก่อนหน้า (ไม่ใช่ถัดไป)
+
+    !DELAY X มีผลกับบาร์โค้ด "ทุกตัวที่อยู่ถัดจากคำสั่ง" จนกว่าจะเจอ !DELAY ตัวถัดไป
+    (ตรงตาม readme — ไม่ใช่ย้อนกลับไปแก้ตัวก่อนหน้า)
     """
-    result = []
+    result: list[tuple[str, float]] = []
+    current_delay = default_delay
 
     for line in lines:
-        if line.upper().startswith("!DELAY "):
+        line = line.strip()
+        if not line:
+            continue
+
+        upper = line.upper()
+        if upper == "!DELAY" or upper.startswith("!DELAY "):
+            raw_value = line[len("!DELAY"):].strip()
             try:
-                new_delay = float(line[7:].strip())
-                if result:
-                    # ย้อนกลับไปอัปเดต delay ให้บาร์โค้ดตัวล่าสุดที่เพิ่ง push เข้าไป
-                    last_barcode = result[-1][0]
-                    result[-1] = (last_barcode, new_delay)
-                else:
-                    # ถ้าเจอ !DELAY บรรทัดแรกสุดเลย (ไม่มีบาร์โค้ดก่อนหน้า) ก็ข้ามไป
-                    pass
+                new_delay = float(raw_value)
             except ValueError:
                 print(f"  [BATCH WARN] ค่า !DELAY เพี้ยน: {line!r} — ข้ามไป")
+                continue
+            if new_delay < 0:
+                print(f"  [BATCH WARN] !DELAY ติดลบ: {line!r} — ข้ามไป")
+                continue
+            current_delay = new_delay
         else:
-            # ใส่บาร์โค้ดบรรทัดใหม่เข้าไป พร้อมแปะ default_delay ไว้ก่อน
-            result.append((line, default_delay))
+            result.append((line, current_delay))
 
     return result
 
@@ -175,11 +181,8 @@ def emulate_batch(
 # Interactive CLI
 # ─────────────────────────────────────────────
 
-def interactive_mode() -> None:
-    """โหมด interactive — ตั้งค่าแล้วสแกนซ้ำได้เรื่อยๆ"""
-    print("=" * 50)
-    print("  HID Barcode Scanner Emulator (Interactive)")
-    print("=" * 50)
+def _prompt_config() -> tuple[str, float, int]:
+    """prompt config -> (end_key, char_delay_sec, startup_wait_sec)"""
 
     end_key = input(f"\nEnd key [{DEFAULT_END_KEY}]: ").strip() or DEFAULT_END_KEY
     if end_key.lower() not in END_KEY_MAP:
@@ -198,30 +201,55 @@ def interactive_mode() -> None:
         startup_wait = int(wait_input) if wait_input else DEFAULT_STARTUP_WAIT
     except ValueError:
         startup_wait = DEFAULT_STARTUP_WAIT
+    # negative value -> time.sleep() raises; fall back to defaults
+    if char_delay < 0:
+        char_delay = DEFAULT_CHAR_DELAY
+    if startup_wait < 0:
+        startup_wait = DEFAULT_STARTUP_WAIT
 
-    print(f"\nConfig: end={end_key} | delay={char_delay*1000:.0f}ms | wait={startup_wait}s")
-    print("พิมพ์ 'quit' เพื่อออก | 'config' เพื่อตั้งค่าใหม่\n")
+    return end_key, char_delay, startup_wait
+
+
+def interactive_mode() -> None:
+    """โหมด interactive — ตั้งค่าแล้วสแกนซ้ำได้เรื่อยๆ"""
+    print("=" * 50)
+    print("  HID Barcode Scanner Emulator (Interactive)")
+    print("=" * 50)
+
+    end_key, char_delay, startup_wait = _prompt_config()
 
     while True:
-        value = input("📦 Barcode value: ").strip()
-        if value.lower() == "quit":
-            print("Bye 👋")
-            break
-        if value.lower() == "config":
-            interactive_mode()
-            return
-        if not value:
-            print("  ⚠️  ค่าว่าง — ข้าม")
-            continue
+        print(f"\nConfig: end={end_key} | delay={char_delay*1000:.0f}ms | wait={startup_wait}s")
+        print("พิมพ์ 'quit' เพื่อออก | 'config' เพื่อตั้งค่าใหม่\n")
 
-        emulate_scan(
-            value=value,
-            end_key=end_key,
-            char_delay=char_delay,
-            startup_wait=startup_wait,
-            verbose=True,
-        )
-        print()
+        reconfigure = False
+        while not reconfigure:
+            try:
+                value = input("📦 Barcode value: ").strip()
+            except EOFError:
+                print()
+                return
+            if value.lower() == "quit":
+                print("Bye 👋")
+                return
+            if value.lower() == "config":
+                # re-prompt in a loop instead of recursing (old code called
+                # interactive_mode() from inside itself, growing the stack)
+                end_key, char_delay, startup_wait = _prompt_config()
+                reconfigure = True
+                continue
+            if not value:
+                print("  ⚠️  ค่าว่าง — ข้าม")
+                continue
+
+            emulate_scan(
+                value=value,
+                end_key=end_key,
+                char_delay=char_delay,
+                startup_wait=startup_wait,
+                verbose=True,
+            )
+            print()
 
 
 # ─────────────────────────────────────────────
@@ -233,30 +261,32 @@ HOTKEY_KEY_MAP = {
     "f5": "<f5>", "f6": "<f6>", "f7": "<f7>", "f8": "<f8>",
     "f9": "<f9>", "f10": "<f10>", "f11": "<f11>", "f12": "<f12>",
 }
-DEFAULT_HOTKEY = "f8"
+DEFAULT_HOTKEY = "f9"
 
 
 def _inject_current(state: dict, lock: threading.Lock) -> None:
     """ฟังก์ชันทำงานเมื่อกด Hotkey (รันแบบ Thread-safe + Non-blocking ลิสเนอร์)"""
+    # อ่านสถานะ + จอง injecting ใน critical section เดียว
+    # (ถ้าแยกเป็นสอง with lock จะเกิด race: กดรัวๆ แล้ว worker ซ้อนกันได้)
     with lock:
+        if state["injecting"]:
+            _print_status("[SKIP] งานเก่ายังรันไม่เสร็จ — รอแป๊บใจเย็นวัยรุ่น")
+            return
+
         mode = state["mode"]
         value = state["value"]
         batch_file = state["batch_file"]
         end_key = state["end_key"]
         char_delay = state["char_delay"]
-        injecting = state["injecting"]
         between_delay = state["between_scan_delay"]
 
-    if injecting:
-        _print_status("[SKIP] งานเก่ายังรันไม่เสร็จ — รอแป๊บใจเย็นวัยรุ่น")
-        return
+        if mode == "single" and not value:
+            _print_status("[SKIP] ไม่มีบาร์โค้ดให้ยิง — พิมพ์ค่าใน terminal ก่อน")
+            return
+        if mode == "batch" and not batch_file:
+            _print_status("[SKIP] ยังไม่ได้เลือกไฟล์แบทช์ — พิมพ์ batch:ชื่อไฟล์ ก่อน")
+            return
 
-    if mode == "single" and not value:
-        _print_status("[SKIP] ไม่มีบาร์โค้ดให้ยิง — พิมพ์ค่าใน terminal ก่อน")
-        return
-
-    # ล็อคสถานะป้องกันการกดซ้อน
-    with lock:
         state["injecting"] = True
 
     # แยก Worker Thread ออกมาเพื่อไม่ให้ตัวดักปุ่มค้าง
@@ -331,6 +361,11 @@ def continuous_mode(
         print(f"[ERROR] end key ไม่รองรับ: '{end_key}'")
         sys.exit(1)
 
+    if end_key_lower == hotkey_lower:
+        print(f"[ERROR] end key กับ hotkey ซ้ำกัน ('{hotkey_lower}') — การยิงจะไปกด hotkey ตัวเองซ้ำไม่รู้จบ")
+        print("        เปลี่ยน --end หรือ --hotkey ให้ต่างกันก่อน")
+        sys.exit(1)
+
     hotkey_str = HOTKEY_KEY_MAP[hotkey_lower]
 
     lock  = threading.Lock()
@@ -386,7 +421,11 @@ def continuous_mode(
 
             if raw.lower().startswith("end "):
                 new_end = raw[4:].strip().lower()
-                if new_end in END_KEY_MAP:
+                if new_end not in END_KEY_MAP:
+                    print(f"  ❌ [ERROR] ไม่รู้จัก end key {new_end!r} — ใช้ได้: {', '.join(END_KEY_MAP)}")
+                elif new_end == hotkey_lower:
+                    print(f"  ❌ [ERROR] end key ซ้ำกับ hotkey ({hotkey_lower}) — จะยิงวนไม่รู้จบ")
+                else:
                     with lock: state["end_key"] = new_end
                     print(f"  [OK] เปลี่ยน end key -> {new_end!r}")
                 continue
@@ -394,9 +433,14 @@ def continuous_mode(
             if raw.lower().startswith("delay "):
                 try:
                     new_delay = float(raw[6:].strip()) / 1000
-                    with lock: state["char_delay"] = new_delay
-                    print(f"  [OK] เปลี่ยน char delay -> {new_delay * 1000:.0f}ms")
-                except ValueError: pass
+                except ValueError:
+                    print(f"  ❌ [ERROR] ค่า delay ไม่ใช่ตัวเลข: {raw[6:].strip()!r}")
+                    continue
+                if new_delay < 0:
+                    print("  ❌ [ERROR] delay ติดลบไม่ได้")
+                    continue
+                with lock: state["char_delay"] = new_delay
+                print(f"  [OK] เปลี่ยน char delay -> {new_delay * 1000:.0f}ms")
                 continue
 
             # ── สลับเป็น BATCH MODE ด้วย Prefix ──
@@ -448,6 +492,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.delay < 0 or args.wait < 0 or args.between < 0:
+        print("[ERROR] --delay / --wait / --between must not be negative")
+        sys.exit(1)
+
+    if args.continuous and args.batch:
+        print("[ERROR] --continuous and --batch cannot be used together;"
+              " run --continuous then type batch:<file> at the prompt")
+        sys.exit(1)
 
     if args.continuous:
         continuous_mode(
